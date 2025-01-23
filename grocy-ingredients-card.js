@@ -1,15 +1,17 @@
-const LitElement = customElements.get("hui-masonry-view")
-    ? Object.getPrototypeOf(customElements.get("hui-masonry-view"))
-    : Object.getPrototypeOf(customElements.get("hui-view"));
-const html = LitElement.prototype.html;
-const css = LitElement.prototype.css;
+// Updated to match HASS Custom Card Documentation
+import {
+    LitElement,
+    html,
+    css,
+  } from "https://unpkg.com/lit-element@2.0.1/lit-element.js?module";
 
 window.customCards = window.customCards || [];
 window.customCards.push({
     type: "grocy-ingredients-card",
     name: "Ingredients Card",
     description: "A card to the ingredients required for the current meal plan recipe.",
-    preview: false,
+    configurable: true,
+    preview: true,
 });
 
 const fireEvent = (node, type, detail, options) => {
@@ -32,48 +34,148 @@ class IngredientsCard extends LitElement {
     allProducts = [];
     allQUs = [];
 
+    // Holds the next meal plan entry (whose data is displayed on the card)
+    nextMeal = null;
+
     static get properties() {
         return {
-            _config: {
-                displayRows: 2
-            },
+            _config: {},
             hass: {},
         };
     }
+
+
+    // ─── Configuration Options ───────────────────────────────────────────
 
     setConfig(config) {
         if (!config.entity) {
             throw new Error("Please select the meal plan sensor");
         }
 
+        if (!config.grocyURL) {
+            throw new Error("No Grocy URL specified")
+        }
+
         if (!config.grocyAPIKey) {
-            throw new Error("Please set your grocyAPIKey");
+            throw new Error("Please set the API Key");
         }
 
         this._config = config;
     }
 
-    translate(string) {
-        if ((this._config.custom_translation != null) &&
-            (this._config.custom_translation[string] != null)) {
-            return this._config.custom_translation[string];
-        }
-        return string;
+    // Returns default configuration options
+    static getStubConfig() {
+        return {
+            entity: "sensor.grocy_meal_plan",
+            displayRows: 3,
+            grocyURL: null,
+            grocyAPIKey: null,
+         }
     }
+
+    // How many rows does the card take up in grid view
+    getCardSize() {
+        return 3;
+    }
+
+    // Clicking on the card just brings up meal plan entity
+    _handleClick() {
+        fireEvent(this, "hass-more-info", { entityId: this._config.entity });
+    }
+
+
+    // ─── Grocy Recipes Functionality ─────────────────────────────────────
+
+    // Request updated data from Grocy server.
+    // Updates: recipePos, allProducts, allQUs
+    _updateGrocyData() {
+        const requestOptions = {
+            method: "GET",
+            headers: {
+                "GROCY-API-KEY": this._config.grocyAPIKey
+            }
+        }
+
+        const baseUrl = this._config.grocyURL;
+
+        return new Promise(resolve => {
+            let requestsComplete = 0;
+            function requestComplete() {
+                requestsComplete ++;
+                
+                if (requestsComplete == 3) {
+                    resolve(true)
+                }
+            }
+
+            // The recipe products act as a bridge between 
+            fetch(new URL("/api/objects/recipes_pos", baseUrl), requestOptions)
+            .then(response => { return response.json(); })
+            .then(data => this.recipePos = data)
+            .then(requestComplete)
+
+            // Request list of products
+            fetch(new URL("/api/objects/products", baseUrl), requestOptions)
+            .then(response => { return response.json(); })
+            .then(data => this.allProducts = data)
+            .then(requestComplete)
+
+            // Request list of all quantity units
+            fetch(new URL("/api/objects/quantity_units", baseUrl), requestOptions)
+            .then(response => { return response.json(); })
+            .then(data => this.allQUs = data)
+            .then(requestComplete)
+        });
+
+    }
+
+    /* Generates a list of ingredients required and outputs via a dictionary
+     * Format:
+     * {
+     *   <sectionName>: [
+     *     {
+     *       name: string
+     *       amount: string
+     *       section: string
+     *       note: string
+     *     }
+     *   ]
+     * }
+     */
+    _generateIngredientsList(recipeID, recipeServings) {
+        var recipe_ingredients = this.recipePos.filter(value => {return value.recipe_id == recipeID})
+
+        var ingredientsList = {};
+
+        recipe_ingredients.forEach(ingredients => {
+            if (ingredientsList[ingredients.ingredient_group] == null) {
+                ingredientsList[ingredients.ingredient_group] = []
+            }
+
+            ingredientsList[ingredients.ingredient_group].push(
+            {
+                name: this.allProducts.find(product => product.id == ingredients.product_id).name,
+                amount: ingredients.amount.toString() + this.allQUs.find(unit => unit.id == ingredients.qu_id).name,
+                section: ingredients.ingredient_group,
+                note: ingredients.note
+            });
+        });
+
+        return ingredientsList;
+    }
+
+
+    // ─── Card Rendering ──────────────────────────────────────────────────
 
     render() {
         if (!this._config || !this.hass) {
             return html``;
         }
 
-        this.numberElements = 0;
-        this.recipelength = 300;
-        if (this._config.recipeLength != null) {
-            this.recipelength = this._config.recipeLength;
-        }
-        const stateObj = this.hass.states[this._config.entity];
+        let stateObject = this.hass.states[this._config.entity];
 
-        if (!stateObj) {
+        // Error handling if grocy sensor becomes unavailable.
+        if (!stateObject) {
             return html`
             <style>
               .not-found {
@@ -90,81 +192,46 @@ class IngredientsCard extends LitElement {
           `;
         }
 
-        var lastrender = new Date();
+        // We only display the recipe for the next meals
+        this.nextMeal = stateObject.attributes.meals[0];
         
-        if (stateObj != this.lastMP) {
-            console.log("The meal plan was updated");
-            const requestOptions = {
-                method: "GET",
-                headers: {
-                    "GROCY-API-KEY": this._config.grocyAPIKey
-                }
-            }
-
-            fetch("https://grocy.limeparallelogram.uk/api/objects/recipes_pos", requestOptions)
-            .then(response => {
-               return response.json();
-            })
-            .then(data => this.recipePos = data)
-
-            // Request list of products
-            fetch("https://grocy.limeparallelogram.uk/api/objects/products", requestOptions)
-            .then(response => {
-               return response.json();
-            })
-            .then(data => this.allProducts = data)
-
-            // Request list of all quantity units
-            fetch("https://grocy.limeparallelogram.uk/api/objects/quantity_units", requestOptions)
-            .then(response => {
-               return response.json();
-            })
-            .then(data => this.allQUs = data)
-
-            this.lastMP = stateObj;
-        }
-
-        var next_meal = stateObj.attributes.meals[0]
-        var recipe_ingredients = this.recipePos.filter(value => {return value.recipe_id == next_meal.recipe_id})
-
-        var sections = [];
-
-        var ingredients_readable = recipe_ingredients.map(initial => {
-            if (initial.ingredient_group != null) {
-                sections.push(initial.ingredient_group);
-            }
-
-            return {
-                id: initial.product_id,
-                name: this.allProducts.find(product => product.id == initial.product_id).name,
-                amount: initial.amount.toString() + this.allQUs.find(unit => unit.id == initial.qu_id).name,
-                section: initial.ingredient_group
-            }
-        })
-
-        sections.push(null) // Ensure un-grouped ingredients are last
-
-        var ingredients_by_section = {};
-        if (sections.length == 0) {
-            ingredients_by_section = {
-                Ingredients: ingredients_readable
-            }
+        let cardContent = document.createElement("div");
+        cardContent.innerText = "Loading ..."
+        
+        // Only make the additional requests to Grocy if the HA meal plan object has changed
+        if (this.nextMeal != this.lastMP) {
+            this.lastMP = this.nextMeal;
+            this._updateGrocyData().then(success => {
+                console.log("Updating from grocy succeeded: " + success)
+                cardContent.replaceChildren(this._renderCardContent());
+            });
         } else {
-            sections.forEach(sectionName => {
-                ingredients_by_section[sectionName] = ingredients_readable.filter(ingredient => { return ingredient.section == sectionName} )
-            })
+            cardContent.replaceChildren(this._renderCardContent());
         }
         
         return html`
-          <ha-card @click="${this._handleClick}">
-            ${this.renderList(ingredients_by_section, 1)}
-          </ha-card>
+        <ha-card @click="${this._handleClick}">
+          ${cardContent}
+        </ha-card>
         `;
     }
 
-    renderList(ingredients, rows) {
-        console.log(ingredients)
+    /*
+     * Get complete card content. Separated from main render() method so can be
+     * called additionally when the grocy requests are complete
+     */
+    _renderCardContent() {
+        return this._renderIngredientsList(this.nextMeal.recipe_id, 1)
+    }
+
+
+    /*
+     * Render a box showing ingredients for specified recipeID
+     */
+    _renderIngredientsList(recipeID, recipeServings) {
         var newDiv = document.createElement("div");
+
+        let ingredients = this._generateIngredientsList(recipeID, recipeServings);
 
         for (let [sectionName, sectionIngredients] of Object.entries(ingredients)) {
             let sectionTitle = document.createElement("div")
@@ -172,7 +239,9 @@ class IngredientsCard extends LitElement {
 
             if (sectionName != "null") {
                 sectionTitle.innerText = sectionName;  
-            } else {
+            } else if (Object.keys(ingredients).length == 0 ) {  // There are no sections
+                sectionTitle.innerText = "INGREDIENTS"
+            } else { // Some ingredients not assigned a section
                 sectionTitle.innerText = "BASE"
             }
 
@@ -185,6 +254,8 @@ class IngredientsCard extends LitElement {
             sectionIngredients.forEach(element => {
                 let ingredientEntry = document.createElement("div")
                 ingredientEntry.classList.add("ingredient-entry");
+
+                // Styling defined here so can be dynamic based on config
                 ingredientEntry.style.flex = `${100/this._config.displayRows}%`
                 ingredientEntry.style.maxWidth = `${100/this._config.displayRows}%`
                 
@@ -199,13 +270,8 @@ class IngredientsCard extends LitElement {
         return newDiv;
     }
 
-    _handleClick() {
-        fireEvent(this, "hass-more-info", { entityId: this._config.entity });
-    }
 
-    getCardSize() {
-        return 3;
-    }
+    // ─── CSS Styling ─────────────────────────────────────────────────────
 
     static get styles() {
         return css`
