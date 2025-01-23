@@ -61,7 +61,12 @@ class IngredientsCard extends LitElement {
             throw new Error("Please set the API Key");
         }
 
-        this._config = config;
+        this._config = Object.assign({
+            displayRows: 2,
+            showMethod: true,
+            showIngredients: true,
+            showTitle: true
+        }, config);
     }
 
     // Returns default configuration options
@@ -223,7 +228,7 @@ class IngredientsCard extends LitElement {
         cardContent.innerText = "Loading ..."
         
         // Only make the additional requests to Grocy if the HA meal plan object has changed
-        if (this.nextMeal != this.lastMP) {
+        if ((this.nextMeal != this.lastMP || this.allProducts.length == 0) && this._config.showIngredients) {
             this.lastMP = this.nextMeal;
             this._updateGrocyData().then(success => {
                 console.log("Updating from grocy succeeded: " + success)
@@ -245,7 +250,23 @@ class IngredientsCard extends LitElement {
      * called additionally when the grocy requests are complete
      */
     _renderCardContent() {
-        return this._renderIngredientsList(this.nextMeal.recipe_id, 1)
+        var container = document.createElement("div")
+
+        if (this._config.showTitle) {
+            var titleElement = document.createElement("h1")
+            titleElement.innerText = this.nextMeal.recipe.name
+            container.appendChild(titleElement)
+        }
+
+        if (this._config.showIngredients) {
+            container.appendChild(this._renderIngredientsList(this.nextMeal.recipe_id, 1))
+        }
+
+        if (this._config.showMethod) {
+            container.appendChild(this._renderMethod())
+        }
+        
+        return container
     }
 
 
@@ -296,7 +317,17 @@ class IngredientsCard extends LitElement {
             newDiv.appendChild(ingredientContainer);
         }
 
+        console.log(newDiv)
         return newDiv;
+    }
+
+    _renderMethod() {
+        let newDiv = document.createElement("div")
+        newDiv.classList.add("method-container")
+
+        newDiv.innerHTML = this.nextMeal.recipe.description
+
+        return newDiv
     }
 
 
@@ -312,6 +343,7 @@ class IngredientsCard extends LitElement {
             padding-left: 1em;
             padding-right: 1em;
             position: relative;
+            text-align: left;
           }
 
           .ingredients-container {
@@ -348,6 +380,10 @@ class IngredientsCard extends LitElement {
           .section-title {
             font-weight: bold;
             text-align: left;
+          }
+
+          .method-container {
+            padding-top: 1em;
           }
         `;
     }
