@@ -33,6 +33,7 @@ class IngredientsCard extends LitElement {
     recipePos = []; // Used to store the recipePos as retrieved from server
     allProducts = [];
     allQUs = [];
+    quConversions = [];
 
     // Holds the next meal plan entry (whose data is displayed on the card)
     nextMeal = null;
@@ -103,7 +104,7 @@ class IngredientsCard extends LitElement {
             function requestComplete() {
                 requestsComplete ++;
                 
-                if (requestsComplete == 3) {
+                if (requestsComplete == 4) {
                     resolve(true)
                 }
             }
@@ -124,6 +125,12 @@ class IngredientsCard extends LitElement {
             fetch(new URL("/api/objects/quantity_units", baseUrl), requestOptions)
             .then(response => { return response.json(); })
             .then(data => this.allQUs = data)
+            .then(requestComplete)
+
+            // Request list of all unit conversions
+            fetch(new URL("/api/objects/quantity_unit_conversions", baseUrl), requestOptions)
+            .then(response => { return response.json(); })
+            .then(data => this.quConversions = data)
             .then(requestComplete)
         });
 
@@ -147,17 +154,34 @@ class IngredientsCard extends LitElement {
 
         var ingredientsList = {};
 
-        recipe_ingredients.forEach(ingredients => {
-            if (ingredientsList[ingredients.ingredient_group] == null) {
-                ingredientsList[ingredients.ingredient_group] = []
+        recipe_ingredients.forEach(ingredient => {
+            if (ingredientsList[ingredient.ingredient_group] == null) {
+                ingredientsList[ingredient.ingredient_group] = []
             }
 
-            ingredientsList[ingredients.ingredient_group].push(
+            let product = this.allProducts.find(product => product.id == ingredient.product_id)
+
+            // Amount is always stored in the product's stock amount so may need to convert
+            let multiplier = 1;
+            if (product.qu_id_stock != ingredient.qu_id && !ingredient.only_check_single_unit_in_stock) {
+                multiplier = this.quConversions.find(conversion => (conversion.from_qu_id == product.qu_id_stock &&
+                                                     conversion.to_qu_id == ingredient.qu_id)).factor;
+            }
+
+            let amountText = (ingredient.amount * multiplier).toString() + this.allQUs.find(unit => unit.id == ingredient.qu_id).name;
+            if (ingredient.variable_amount != null) {
+                // I feel arguably it makes sense not to show the qu_name but show it to be consistent
+                amountText = ingredient.variable_amount + " " +
+                             this.allQUs.find(unit => unit.id == ingredient.qu_id).name;
+            }
+
+
+            ingredientsList[ingredient.ingredient_group].push(
             {
-                name: this.allProducts.find(product => product.id == ingredients.product_id).name,
-                amount: ingredients.amount.toString() + this.allQUs.find(unit => unit.id == ingredients.qu_id).name,
-                section: ingredients.ingredient_group,
-                note: ingredients.note
+                name: product.name,
+                amount: amountText,
+                section: ingredient.ingredient_group,
+                note: ingredient.note
             });
         });
 
@@ -258,8 +282,13 @@ class IngredientsCard extends LitElement {
                 // Styling defined here so can be dynamic based on config
                 ingredientEntry.style.flex = `${100/this._config.displayRows}%`
                 ingredientEntry.style.maxWidth = `${100/this._config.displayRows}%`
+
+                let noteElement = "";
+                if (element.note) {
+                    noteElement = `<span class="ingredient-note">${element.note}</span>`
+                }
                 
-                ingredientEntry.innerHTML += `<div class="ingredient-bullet"></div> <div class="ingredient-name">${element.name}</div> <div class="ingredient-amount">${element.amount}</div>`
+                ingredientEntry.innerHTML += `<div class="ingredient-bullet"></div> <div class="ingredient-name">${element.name} ${noteElement}</div> <div class="ingredient-amount">${element.amount}</div>`
                 
                 ingredientContainer.appendChild(ingredientEntry);
             });
@@ -293,7 +322,7 @@ class IngredientsCard extends LitElement {
           .ingredient-entry {
             padding: 0;
             display: flex;
-            align-items: center;
+            align-items: flex-start;
           }
 
           .ingredient-bullet {
@@ -302,12 +331,18 @@ class IngredientsCard extends LitElement {
             border: 2px solid grey;
             border-radius: 50%;
             margin-left: 20px;
+            margin-top: 0.5em;
           }
         
           .ingredient-name {
             flex-grow: 1;
             text-align: left;
             padding: 4px;
+          }
+
+          .ingredient-note {
+            font-size: 0.8em;
+            opacity: 0.7;
           }
 
           .section-title {
