@@ -133,7 +133,7 @@ class IngredientsCard extends LitElement {
             .then(requestComplete)
 
             // Request list of all unit conversions
-            fetch(new URL("/api/objects/quantity_unit_conversions", baseUrl), requestOptions)
+            fetch(new URL("/api/objects/quantity_unit_conversions_resolved", baseUrl), requestOptions)
             .then(response => { return response.json(); })
             .then(data => this.quConversions = data)
             .then(requestComplete)
@@ -170,7 +170,8 @@ class IngredientsCard extends LitElement {
             let multiplier = 1;
             if (product.qu_id_stock != ingredient.qu_id && !ingredient.only_check_single_unit_in_stock) {
                 multiplier = this.quConversions.find(conversion => (conversion.from_qu_id == product.qu_id_stock &&
-                                                     conversion.to_qu_id == ingredient.qu_id)).factor;
+                                                     conversion.to_qu_id == ingredient.qu_id &&
+                                                     (conversion.product_id == null || conversion.product_id == ingredient.product_id))).factor;
             }
 
             let amountText = (ingredient.amount * multiplier).toString() + this.allQUs.find(unit => unit.id == ingredient.qu_id).name;
